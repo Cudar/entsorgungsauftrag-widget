@@ -113,6 +113,14 @@ export type ProductsStepData = z.infer<typeof productsStepSchema>;
 export type SubmitStepData = z.infer<typeof submitStepSchema>;
 export type EntsorgungsauftragData = z.infer<typeof entsorgungsauftragSchema>;
 
+export type EntsorgungsauftragDraft = Omit<
+  EntsorgungsauftragData,
+  'privacyAccepted' | 'termsAccepted'
+> & {
+  privacyAccepted: boolean;
+  termsAccepted: boolean;
+};
+
 export interface EntsorgungsauftragPayload {
   formType: 'entsorgungsauftrag';
   customer: {

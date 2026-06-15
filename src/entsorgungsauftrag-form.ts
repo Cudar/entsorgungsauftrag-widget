@@ -6,7 +6,7 @@ import {
   productsStepSchema,
   submitStepSchema,
   toPayload,
-  type EntsorgungsauftragData,
+  type EntsorgungsauftragDraft,
 } from './schema';
 import { createAddressValidator } from './validation/address/api';
 import { createVatValidator } from './validation/vat/vies';
@@ -149,13 +149,33 @@ export class EntsorgungsauftragForm extends HTMLElement {
     return createVatValidator(mode, apiUrl);
   }
 
-  private setState(patch: Partial<FormState>): void {
+  private setState(patch: Partial<FormState>, options: { render?: boolean } = { render: true }): void {
     this.state = { ...this.state, ...patch };
-    this.render();
+    if (options.render !== false) {
+      this.render();
+    }
+  }
+
+  private syncState(patch: Partial<FormState>): void {
+    this.state = { ...this.state, ...patch };
+  }
+
+  private clearFieldErrorUi(target: HTMLInputElement | HTMLTextAreaElement): void {
+    const describedBy = target.getAttribute('aria-describedby');
+    if (describedBy) {
+      this.shadowRoot?.getElementById(describedBy)?.remove();
+    }
+    target.removeAttribute('aria-invalid');
+    target.removeAttribute('aria-describedby');
   }
 
   private render(): void {
     if (!this.shadowRoot) return;
+
+    const active = this.shadowRoot.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+    const focusSelector = this.getFocusSelector(active);
+    const selectionStart = active?.selectionStart ?? null;
+    const selectionEnd = active?.selectionEnd ?? null;
 
     const { step, submitted } = this.state;
 
@@ -169,6 +189,31 @@ export class EntsorgungsauftragForm extends HTMLElement {
     `;
 
     this.bindEvents();
+    this.restoreFocus(focusSelector, selectionStart, selectionEnd);
+  }
+
+  private getFocusSelector(element: Element | null): string | null {
+    if (!element) return null;
+    if (element.id) return `#${CSS.escape(element.id)}`;
+    const name = element.getAttribute('name');
+    if (name) return `[name="${CSS.escape(name)}"]`;
+    return null;
+  }
+
+  private restoreFocus(
+    selector: string | null,
+    selectionStart: number | null,
+    selectionEnd: number | null,
+  ): void {
+    if (!selector || !this.shadowRoot) return;
+
+    const element = this.shadowRoot.querySelector(selector);
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
+
+    element.focus();
+    if (selectionStart !== null && selectionEnd !== null && typeof element.setSelectionRange === 'function') {
+      element.setSelectionRange(selectionStart, selectionEnd);
+    }
   }
 
   private renderSteps(): string {
@@ -352,6 +397,7 @@ export class EntsorgungsauftragForm extends HTMLElement {
     });
 
     const groups = ['Altöl', 'Emulsion'] as const;
+    const wasteKeyErrorKey = `products.${index}.wasteKeyNumber`;
 
     return `
       <div class="combobox" data-combobox="${index}">
@@ -363,7 +409,7 @@ export class EntsorgungsauftragForm extends HTMLElement {
           autocomplete="off"
           placeholder="Suchen nach Code oder Bezeichnung …"
           value="${escapeHtml(displayValue)}"
-          aria-invalid="${this.state.errors[\`products.${index}.wasteKeyNumber\`] ? 'true' : 'false'}"
+          aria-invalid="${this.state.errors[wasteKeyErrorKey] ? 'true' : 'false'}"
           aria-expanded="${this.state.wasteListOpen[index] ? 'true' : 'false'}"
         />
         <input type="hidden" name="wasteKeyNumber-${index}" value="${escapeHtml(selected)}" />
@@ -405,8 +451,9 @@ export class EntsorgungsauftragForm extends HTMLElement {
       <fieldset>
         <legend>Produkte</legend>
         ${this.state.products
-          .map(
-            (product, index) => `
+          .map((product, index) => {
+            const quantityErrorKey = `products.${index}.quantityLiters`;
+            return `
           <div class="product-block" data-product-index="${index}">
             <div class="product-header">
               <span>Produkt ${index + 1}</span>
@@ -420,13 +467,13 @@ export class EntsorgungsauftragForm extends HTMLElement {
               ${this.renderWasteCombobox(index)}
               <div class="field">
                 <label class="required" for="quantityLiters-${index}">Menge in Liter</label>
-                <input id="quantityLiters-${index}" name="quantityLiters-${index}" type="number" min="1" step="1" value="${escapeHtml(product.quantityLiters)}" aria-invalid="${errors[\`products.${index}.quantityLiters\`] ? 'true' : 'false'}" />
-                ${fieldError(errors, `products.${index}.quantityLiters`)}
+                <input id="quantityLiters-${index}" name="quantityLiters-${index}" type="number" min="1" step="1" value="${escapeHtml(product.quantityLiters)}" aria-invalid="${errors[quantityErrorKey] ? 'true' : 'false'}" />
+                ${fieldError(errors, quantityErrorKey)}
               </div>
             </div>
           </div>
-        `,
-          )
+        `;
+          })
           .join('')}
         <button type="button" class="secondary" data-add-product>+ Weiteres Produkt hinzufügen</button>
         ${fieldError(errors, 'products')}
@@ -655,7 +702,8 @@ export class EntsorgungsauftragForm extends HTMLElement {
       const products = [...this.state.products];
       products[index] = { ...products[index], quantityLiters: value };
       clearError(`products.${index}.quantityLiters`);
-      this.setState({ products, errors: patch.errors });
+      this.clearFieldErrorUi(target);
+      this.syncState({ products, errors: patch.errors });
       return;
     }
 
@@ -680,11 +728,15 @@ export class EntsorgungsauftragForm extends HTMLElement {
 
     if (fieldMap[name]) {
       clearError(name);
-      this.setState({ [fieldMap[name]]: type === 'checkbox' ? (target as HTMLInputElement).checked : value, errors: patch.errors });
+      this.clearFieldErrorUi(target);
+      this.syncState({
+        [fieldMap[name]]: type === 'checkbox' ? (target as HTMLInputElement).checked : value,
+        errors: patch.errors,
+      });
     }
   }
 
-  private collectFormData(): EntsorgungsauftragData {
+  private collectFormData(): EntsorgungsauftragDraft {
     const products = this.state.products.map((product) => ({
       wasteKeyNumber: product.wasteKeyNumber,
       quantityLiters: Number(product.quantityLiters),
@@ -827,7 +879,11 @@ export class EntsorgungsauftragForm extends HTMLElement {
       }),
     );
 
-    const payload = toPayload(data, this.locale, wasteKeyLabels);
+    const payload = toPayload(
+      { ...data, privacyAccepted: true, termsAccepted: true },
+      this.locale,
+      wasteKeyLabels,
+    );
 
     this.dispatchEvent(
       new CustomEvent('entsorgungsauftrag:submit', {
