@@ -398,4 +398,9 @@ export const formStyles = `
     gap: 0.75rem;
     margin-top: 1.25rem;
   }
+
+  .modal-actions .link {
+    align-self: center;
+    margin-top: 0.25rem;
+  }
 `;

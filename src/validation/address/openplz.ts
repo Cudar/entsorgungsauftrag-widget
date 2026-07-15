@@ -77,7 +77,6 @@ function buildStreetSearchPrefix(streetName: string): string | null {
 
 function buildSuggestion(
   address: AddressInput,
-  streetName: string,
   houseNumber: string | undefined,
   locality: OpenPlzLocality,
   street?: OpenPlzStreet,
@@ -92,6 +91,10 @@ function buildSuggestion(
     city: locality.name,
     country: address.country,
   };
+}
+
+function uniqueFields(fields: AddressField[]): AddressField[] {
+  return [...new Set(fields)];
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -155,63 +158,69 @@ export class OpenPlzAddressValidator implements AddressValidator {
     try {
       const localities = await this.fetchLocalities(postalCode);
       const matchingLocality = localities.find((entry) => localityMatches(city, entry.name));
+      const referenceLocality = matchingLocality ?? localities[0];
 
-      if (!matchingLocality) {
-        const suggestedLocality = localities[0];
+      const invalidFields: AddressField[] = [];
+      const messages: string[] = [];
 
+      if (localities.length === 0) {
+        invalidFields.push('postalCode');
+        messages.push('PLZ nicht gefunden');
+      } else if (!matchingLocality) {
+        invalidFields.push('city');
+        messages.push('Ort passt nicht zur PLZ');
+      }
+
+      let matchingStreet: OpenPlzStreet | undefined;
+      let suggestedStreet: OpenPlzStreet | undefined;
+
+      if (referenceLocality) {
+        const streetPrefix = buildStreetSearchPrefix(parsedStreet.name);
+
+        if (!streetPrefix) {
+          invalidFields.push('street');
+          messages.push('Straße und Hausnummer sind erforderlich');
+        } else {
+          const streets = await this.fetchStreets(postalCode, referenceLocality.name, streetPrefix);
+          matchingStreet = streets.find((entry) => streetNamesMatch(parsedStreet.name, entry.name));
+
+          if (!matchingStreet) {
+            invalidFields.push('street');
+            suggestedStreet = streets[0];
+            messages.push('Straße wurde in dieser PLZ nicht gefunden');
+          }
+        }
+      }
+
+      const uniqueInvalidFields = uniqueFields(invalidFields);
+
+      if (uniqueInvalidFields.length === 0 && matchingLocality && matchingStreet) {
         return {
-          valid: false,
-          messages: ['PLZ und Ort stimmen nicht überein'],
-          normalized,
-          invalidFields: ['postalCode', 'city'],
-          suggestion: suggestedLocality
-            ? buildSuggestion(normalized, parsedStreet.name, parsedStreet.houseNumber, suggestedLocality)
-            : undefined,
+          valid: true,
+          normalized: {
+            street: `${matchingStreet.name} ${parsedStreet.houseNumber}`,
+            postalCode: matchingLocality.postalCode,
+            city: matchingLocality.name,
+            country: normalized.country,
+          },
+          messages: [],
         };
       }
 
-      const streetPrefix = buildStreetSearchPrefix(parsedStreet.name);
-      if (!streetPrefix) {
-        return {
-          valid: false,
-          messages: ['Straße und Hausnummer sind erforderlich'],
-          normalized,
-          invalidFields: ['street'],
-        };
-      }
-
-      const streets = await this.fetchStreets(postalCode, matchingLocality.name, streetPrefix);
-      const matchingStreet = streets.find((entry) => streetNamesMatch(parsedStreet.name, entry.name));
-
-      if (!matchingStreet) {
-        const suggestedStreet = streets[0];
-
-        return {
-          valid: false,
-          messages: ['Straße wurde in dieser PLZ nicht gefunden'],
-          normalized,
-          invalidFields: ['street'],
-          suggestion: suggestedStreet
-            ? buildSuggestion(
-                normalized,
-                parsedStreet.name,
-                parsedStreet.houseNumber,
-                matchingLocality,
-                suggestedStreet,
-              )
-            : undefined,
-        };
-      }
+      const suggestionLocality = matchingLocality ?? referenceLocality;
+      const message =
+        messages.length > 1
+          ? 'Adresse konnte nicht vollständig bestätigt werden'
+          : (messages[0] ?? 'Adresse konnte nicht bestätigt werden');
 
       return {
-        valid: true,
-        normalized: {
-          street: `${matchingStreet.name} ${parsedStreet.houseNumber}`,
-          postalCode: matchingLocality.postalCode,
-          city: matchingLocality.name,
-          country: normalized.country,
-        },
-        messages: [],
+        valid: false,
+        messages: [message],
+        normalized,
+        invalidFields: uniqueInvalidFields,
+        suggestion: suggestionLocality
+          ? buildSuggestion(normalized, parsedStreet.houseNumber, suggestionLocality, suggestedStreet)
+          : undefined,
       };
     } catch {
       if (this.options.fallbackToLocal ?? true) {
