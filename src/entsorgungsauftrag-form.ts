@@ -138,7 +138,11 @@ export class EntsorgungsauftragForm extends HTMLElement {
   }
 
   private get addressValidator() {
-    const mode = this.getAttribute('address-validation') === 'api' ? 'api' : 'local';
+    const configuredMode = this.getAttribute('address-validation') ?? 'openplz';
+    const mode =
+      configuredMode === 'api' || configuredMode === 'local' || configuredMode === 'openplz'
+        ? configuredMode
+        : 'openplz';
     const apiUrl = this.getAttribute('address-api-url') ?? undefined;
     return createAddressValidator(mode, apiUrl);
   }

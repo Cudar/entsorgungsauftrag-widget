@@ -1,5 +1,8 @@
 import type { AddressInput, AddressValidationResult, AddressValidator } from './types';
 import { LocalAddressValidator } from './local';
+import { OpenPlzAddressValidator } from './openplz';
+
+export type AddressValidationMode = 'local' | 'openplz' | 'api';
 
 export interface ApiAddressValidatorOptions {
   apiUrl: string;
@@ -42,9 +45,13 @@ export class ApiAddressValidator implements AddressValidator {
   }
 }
 
-export function createAddressValidator(mode: 'local' | 'api', apiUrl?: string): AddressValidator {
+export function createAddressValidator(mode: AddressValidationMode, apiUrl?: string): AddressValidator {
   if (mode === 'api' && apiUrl) {
     return new ApiAddressValidator({ apiUrl });
+  }
+
+  if (mode === 'openplz') {
+    return new OpenPlzAddressValidator({ baseUrl: apiUrl });
   }
 
   return new LocalAddressValidator();
