@@ -3,18 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Entsorgungsauftrag – Demo</title>
+    <title>Entsorgungsauftrag Widget – Demo</title>
     <style>
       body {
         margin: 0;
-        padding: 2rem 1rem;
+        padding: 2rem 1rem 3rem;
         background: #eef2f6;
         font-family: system-ui, sans-serif;
+        color: #1a1a1a;
       }
 
       .demo-header {
         max-width: 720px;
-        margin: 0 auto 1rem;
+        margin: 0 auto 1.5rem;
+      }
+
+      .demo-header h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.75rem;
+      }
+
+      .demo-header p {
+        margin: 0.35rem 0;
+        color: #57606a;
+        line-height: 1.5;
+      }
+
+      .demo-header code {
+        font-size: 0.9em;
+        background: #fff;
+        padding: 0.1rem 0.35rem;
+        border-radius: 4px;
+        border: 1px solid #d0d7de;
       }
 
       pre {
@@ -32,7 +52,15 @@
   <body>
     <div class="demo-header">
       <h1>Entsorgungsauftrag Widget – Demo</h1>
-      <p>Einbettbar per <code>&lt;script&gt;</code> und <code>&lt;entsorgungsauftrag-form&gt;</code></p>
+      <p>
+        Testen Sie das Formular direkt im Browser. Nach dem Absenden erscheint der JSON-Output
+        unten – so wie er an Ihr Backend übergeben würde.
+      </p>
+      <p>
+        Einbettung auf Ihrer Website per
+        <code>&lt;script src="…/entsorgungsauftrag-form.js"&gt;&lt;/script&gt;</code> und
+        <code>&lt;entsorgungsauftrag-form&gt;&lt;/entsorgungsauftrag-form&gt;</code>.
+      </p>
     </div>
 
     <entsorgungsauftrag-form
@@ -45,12 +73,6 @@
 
     <pre id="output">JSON-Output erscheint hier nach dem Absenden …</pre>
 
-    <script type="module" src="/src/index.ts"></script>
-    <script type="module">
-      const output = document.getElementById('output');
-      document.querySelector('entsorgungsauftrag-form').addEventListener('entsorgungsauftrag:submit', (event) => {
-        output.textContent = JSON.stringify(event.detail, null, 2);
-      });
-    </script>
+    <script type="module" src="/src/demo.ts"></script>
   </body>
 </html>

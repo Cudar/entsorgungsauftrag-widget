@@ -328,4 +328,74 @@ export const formStyles = `
     border-radius: var(--eaf-radius);
     color: #067647;
   }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(17, 24, 39, 0.55);
+  }
+
+  .modal {
+    width: min(100%, 480px);
+    padding: 1.5rem;
+    border-radius: var(--eaf-radius);
+    background: #fff;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .modal h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1.15rem;
+  }
+
+  .modal-message {
+    margin: 0 0 1rem;
+    color: #57606a;
+  }
+
+  .modal-section {
+    margin-bottom: 1rem;
+  }
+
+  .modal-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #57606a;
+  }
+
+  .address-line {
+    margin: 0;
+    padding: 0.75rem;
+    border: 1px solid var(--eaf-border);
+    border-radius: 6px;
+    background: var(--eaf-bg-muted);
+    line-height: 1.6;
+  }
+
+  .suggestion-line {
+    background: #ecfdf3;
+    border-color: #abefc6;
+  }
+
+  .address-part-error {
+    color: var(--eaf-error);
+    background: #fef3f2;
+    border-radius: 4px;
+    padding: 0.1rem 0.25rem;
+    font-weight: 600;
+  }
+
+  .modal-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
 `;

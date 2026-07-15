@@ -5,10 +5,14 @@ export interface AddressInput {
   country: string;
 }
 
+export type AddressField = 'street' | 'postalCode' | 'city';
+
 export interface AddressValidationResult {
   valid: boolean;
   normalized?: AddressInput;
   messages: string[];
+  invalidFields?: AddressField[];
+  suggestion?: AddressInput;
 }
 
 export interface AddressValidator {

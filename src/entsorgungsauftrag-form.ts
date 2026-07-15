@@ -9,6 +9,7 @@ import {
   type EntsorgungsauftragDraft,
 } from './schema';
 import { createAddressValidator } from './validation/address/api';
+import type { AddressField, AddressInput } from './validation/address/types';
 import { createVatValidator } from './validation/vat/vies';
 import { formStyles } from './styles/form-styles';
 
@@ -17,6 +18,14 @@ const STEP_LABELS = ['Kundendaten', 'Adressen', 'Produkte', 'Absenden'];
 interface ProductEntry {
   wasteKeyNumber: string;
   quantityLiters: string;
+}
+
+interface AddressReviewState {
+  kind: 'billing' | 'pickup';
+  input: AddressInput;
+  invalidFields: AddressField[];
+  message: string;
+  suggestion?: AddressInput;
 }
 
 interface FormState {
@@ -47,6 +56,9 @@ interface FormState {
   termsAccepted: boolean;
   website: string;
   errors: Record<string, string>;
+  addressReview: AddressReviewState | null;
+  billingAddressValidationSkipped: boolean;
+  pickupAddressValidationSkipped: boolean;
 }
 
 function emptyProduct(): ProductEntry {
@@ -82,6 +94,9 @@ function initialState(): FormState {
     termsAccepted: false,
     website: '',
     errors: {},
+    addressReview: null,
+    billingAddressValidationSkipped: false,
+    pickupAddressValidationSkipped: false,
   };
 }
 
@@ -96,6 +111,38 @@ function escapeHtml(value: string): string {
 
 function fieldError(errors: Record<string, string>, key: string): string {
   return errors[key] ? `<span class="error" id="error-${escapeHtml(key)}">${escapeHtml(errors[key])}</span>` : '';
+}
+
+function addressesEquivalent(a: AddressInput, b: AddressInput): boolean {
+  const normalize = (value: string) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/ß/g, 'ss')
+      .replace(/\s+/g, ' ');
+
+  return (
+    normalize(a.street) === normalize(b.street) &&
+    normalize(a.postalCode) === normalize(b.postalCode) &&
+    normalize(a.city) === normalize(b.city) &&
+    normalize(a.country) === normalize(b.country)
+  );
+}
+
+function renderAddressLine(
+  address: AddressInput,
+  invalidFields: AddressField[],
+  options: { className?: string } = {},
+): string {
+  const className = options.className ?? 'address-line';
+
+  return `
+    <p class="${className}">
+      <span class="address-part ${invalidFields.includes('street') ? 'address-part-error' : ''}">${escapeHtml(address.street)}</span>,
+      <span class="address-part ${invalidFields.includes('postalCode') ? 'address-part-error' : ''}">${escapeHtml(address.postalCode)}</span>
+      <span class="address-part ${invalidFields.includes('city') ? 'address-part-error' : ''}">${escapeHtml(address.city)}</span>
+    </p>
+  `;
 }
 
 export class EntsorgungsauftragForm extends HTMLElement {
@@ -190,6 +237,7 @@ export class EntsorgungsauftragForm extends HTMLElement {
         <p class="subtitle">B2B-Auftrag zur Altölentsorgung</p>
         ${submitted ? this.renderSuccess() : `${this.renderSteps()}${this.renderStepContent()}${this.renderActions()}`}
       </div>
+      ${this.state.addressReview ? this.renderAddressReviewModal() : ''}
     `;
 
     this.bindEvents();
@@ -580,10 +628,147 @@ export class EntsorgungsauftragForm extends HTMLElement {
     `;
   }
 
+  private renderAddressReviewModal(): string {
+    const review = this.state.addressReview;
+    if (!review) return '';
+
+    const title = review.kind === 'billing' ? 'Rechnungsadresse prüfen' : 'Abholadresse prüfen';
+
+    return `
+      <div class="modal-overlay" data-address-modal>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="address-review-title">
+          <h3 id="address-review-title">${title}</h3>
+          <p class="modal-message">${escapeHtml(review.message)}</p>
+
+          <div class="modal-section">
+            <span class="modal-label">Ihre Eingabe</span>
+            ${renderAddressLine(review.input, review.invalidFields)}
+          </div>
+
+          ${
+            review.suggestion
+              ? `
+            <div class="modal-section">
+              <span class="modal-label">Vorschlag</span>
+              ${renderAddressLine(review.suggestion, [], { className: 'address-line suggestion-line' })}
+            </div>
+          `
+              : ''
+          }
+
+          <div class="modal-actions">
+            ${
+              review.suggestion
+                ? '<button type="button" class="primary" data-action="address-accept-suggestion">Vorschlag übernehmen</button>'
+                : ''
+            }
+            <button type="button" class="${review.suggestion ? 'secondary' : 'primary'}" data-action="address-keep-original">Eingegebene Adresse verwenden</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private applyAddressToState(kind: 'billing' | 'pickup', address: AddressInput): Partial<FormState> {
+    if (kind === 'billing') {
+      return {
+        billingStreet: address.street,
+        billingPostalCode: address.postalCode,
+        billingCity: address.city,
+      };
+    }
+
+    return {
+      pickupStreet: address.street,
+      pickupPostalCode: address.postalCode,
+      pickupCity: address.city,
+    };
+  }
+
+  private showAddressReview(
+    kind: 'billing' | 'pickup',
+    input: AddressInput,
+    validation: {
+      messages: string[];
+      invalidFields?: AddressField[];
+      suggestion?: AddressInput;
+    },
+  ): void {
+    const suggestion =
+      validation.suggestion && !addressesEquivalent(input, validation.suggestion)
+        ? validation.suggestion
+        : undefined;
+
+    this.setState({
+      addressReview: {
+        kind,
+        input,
+        invalidFields: validation.invalidFields?.length
+          ? validation.invalidFields
+          : ['street'],
+        message: validation.messages[0] ?? 'Adresse konnte nicht bestätigt werden',
+        suggestion,
+      },
+      errors: {},
+    });
+  }
+
+  private async resolveAddressReview(action: 'accept' | 'keep'): Promise<void> {
+    const review = this.state.addressReview;
+    if (!review) return;
+
+    const patch: Partial<FormState> = { addressReview: null };
+
+    if (action === 'accept' && review.suggestion) {
+      Object.assign(patch, this.applyAddressToState(review.kind, review.suggestion));
+      if (review.kind === 'billing') {
+        patch.billingAddressValidationSkipped = false;
+      } else {
+        patch.pickupAddressValidationSkipped = false;
+      }
+    } else {
+      if (review.kind === 'billing') {
+        patch.billingAddressValidationSkipped = true;
+      } else {
+        patch.pickupAddressValidationSkipped = true;
+      }
+    }
+
+    this.setState(patch);
+    await this.continueAddressStep();
+  }
+
+  private async continueAddressStep(): Promise<void> {
+    const result = await this.validateAddressStep();
+
+    if (result.kind === 'modal') {
+      return;
+    }
+
+    if (result.kind === 'errors') {
+      this.setState({ errors: result.errors });
+      return;
+    }
+
+    this.setState({
+      step: this.state.step + 1,
+      errors: {},
+      addressReview: null,
+      billingAddressValidationSkipped: false,
+      pickupAddressValidationSkipped: false,
+    });
+  }
+
   private bindEvents(): void {
     const root = this.shadowRoot!;
     root.querySelector('[data-action="back"]')?.addEventListener('click', () => {
-      this.setState({ step: this.state.step - 1, errors: {} });
+      this.setState({
+        step: this.state.step - 1,
+        errors: {},
+        addressReview: null,
+        billingAddressValidationSkipped: false,
+        pickupAddressValidationSkipped: false,
+      });
     });
 
     root.querySelector('[data-action="next"]')?.addEventListener('click', () => {
@@ -592,6 +777,14 @@ export class EntsorgungsauftragForm extends HTMLElement {
 
     root.querySelector('[data-action="submit"]')?.addEventListener('click', () => {
       void this.handleSubmit();
+    });
+
+    root.querySelector('[data-action="address-accept-suggestion"]')?.addEventListener('click', () => {
+      void this.resolveAddressReview('accept');
+    });
+
+    root.querySelector('[data-action="address-keep-original"]')?.addEventListener('click', () => {
+      void this.resolveAddressReview('keep');
     });
 
     root.querySelector('[data-add-product]')?.addEventListener('click', () => {
@@ -676,7 +869,10 @@ export class EntsorgungsauftragForm extends HTMLElement {
     }
 
     if (name === 'differentPickupAddress') {
-      this.setState({ differentPickupAddress: (target as HTMLInputElement).checked });
+      this.setState({
+        differentPickupAddress: (target as HTMLInputElement).checked,
+        pickupAddressValidationSkipped: false,
+      });
       return;
     }
 
@@ -733,10 +929,21 @@ export class EntsorgungsauftragForm extends HTMLElement {
     if (fieldMap[name]) {
       clearError(name);
       this.clearFieldErrorUi(target);
-      this.syncState({
+
+      const patchForField: Partial<FormState> = {
         [fieldMap[name]]: type === 'checkbox' ? (target as HTMLInputElement).checked : value,
         errors: patch.errors,
-      });
+      };
+
+      if (name.startsWith('billing')) {
+        patchForField.billingAddressValidationSkipped = false;
+      }
+
+      if (name.startsWith('pickup')) {
+        patchForField.pickupAddressValidationSkipped = false;
+      }
+
+      this.syncState(patchForField);
     }
   }
 
@@ -780,6 +987,11 @@ export class EntsorgungsauftragForm extends HTMLElement {
   }
 
   private async handleNext(): Promise<void> {
+    if (this.state.step === 1) {
+      await this.continueAddressStep();
+      return;
+    }
+
     const errors = await this.validateCurrentStep();
     if (Object.keys(errors).length > 0) {
       this.setState({ errors });
@@ -787,6 +999,51 @@ export class EntsorgungsauftragForm extends HTMLElement {
     }
 
     this.setState({ step: this.state.step + 1, errors: {} });
+  }
+
+  private async validateAddressStep():
+    Promise<
+      | { kind: 'ok' }
+      | { kind: 'errors'; errors: Record<string, string> }
+      | { kind: 'modal' }
+    > {
+    const data = this.collectFormData();
+    const result = addressStepSchema.safeParse({
+      billingAddress: data.billingAddress,
+      differentPickupAddress: data.differentPickupAddress,
+      pickupAddress: data.pickupAddress,
+      reachableWith20mHose: data.reachableWith20mHose,
+    });
+
+    if (!result.success) {
+      return { kind: 'errors', errors: formatZodErrors(result.error) };
+    }
+
+    if (!this.state.billingAddressValidationSkipped) {
+      const billingValidation = await this.addressValidator.validate(data.billingAddress);
+      if (!billingValidation.valid) {
+        this.showAddressReview('billing', data.billingAddress, billingValidation);
+        return { kind: 'modal' };
+      }
+
+      if (billingValidation.normalized) {
+        this.syncState(this.applyAddressToState('billing', billingValidation.normalized));
+      }
+    }
+
+    if (data.differentPickupAddress && data.pickupAddress && !this.state.pickupAddressValidationSkipped) {
+      const pickupValidation = await this.addressValidator.validate(data.pickupAddress);
+      if (!pickupValidation.valid) {
+        this.showAddressReview('pickup', data.pickupAddress, pickupValidation);
+        return { kind: 'modal' };
+      }
+
+      if (pickupValidation.normalized) {
+        this.syncState(this.applyAddressToState('pickup', pickupValidation.normalized));
+      }
+    }
+
+    return { kind: 'ok' };
   }
 
   private async validateCurrentStep(): Promise<Record<string, string>> {
@@ -815,29 +1072,13 @@ export class EntsorgungsauftragForm extends HTMLElement {
     }
 
     if (this.state.step === 1) {
-      const result = addressStepSchema.safeParse({
-        billingAddress: data.billingAddress,
-        differentPickupAddress: data.differentPickupAddress,
-        pickupAddress: data.pickupAddress,
-        reachableWith20mHose: data.reachableWith20mHose,
-      });
-
-      if (!result.success) {
-        return formatZodErrors(result.error);
+      const addressResult = await this.validateAddressStep();
+      if (addressResult.kind === 'modal') {
+        return {};
       }
-
-      const billingValidation = await this.addressValidator.validate(data.billingAddress);
-      if (!billingValidation.valid) {
-        return { 'billingAddress.street': billingValidation.messages[0] ?? 'Rechnungsadresse ungültig' };
+      if (addressResult.kind === 'errors') {
+        return addressResult.errors;
       }
-
-      if (data.differentPickupAddress && data.pickupAddress) {
-        const pickupValidation = await this.addressValidator.validate(data.pickupAddress);
-        if (!pickupValidation.valid) {
-          return { 'pickupAddress.street': pickupValidation.messages[0] ?? 'Abholadresse ungültig' };
-        }
-      }
-
       return {};
     }
 

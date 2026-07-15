@@ -1,4 +1,4 @@
-import type { AddressInput, AddressValidationResult, AddressValidator } from './types';
+import type { AddressField, AddressInput, AddressValidationResult, AddressValidator } from './types';
 import { LocalAddressValidator } from './local';
 
 const DEFAULT_BASE_URL = 'https://openplzapi.org';
@@ -75,6 +75,25 @@ function buildStreetSearchPrefix(streetName: string): string | null {
   return normalized.slice(0, Math.min(12, normalized.length));
 }
 
+function buildSuggestion(
+  address: AddressInput,
+  streetName: string,
+  houseNumber: string | undefined,
+  locality: OpenPlzLocality,
+  street?: OpenPlzStreet,
+): AddressInput {
+  const resolvedStreet = street
+    ? `${street.name}${houseNumber ? ` ${houseNumber}` : ''}`
+    : address.street;
+
+  return {
+    street: resolvedStreet,
+    postalCode: locality.postalCode,
+    city: locality.name,
+    country: address.country,
+  };
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -95,6 +114,25 @@ export class OpenPlzAddressValidator implements AddressValidator {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
   }
 
+  private async fetchLocalities(postalCode: string): Promise<OpenPlzLocality[]> {
+    const params = new URLSearchParams({ postalCode });
+    return fetchJson<OpenPlzLocality[]>(`${this.baseUrl}/de/Localities?${params.toString()}`);
+  }
+
+  private async fetchStreets(
+    postalCode: string,
+    locality: string,
+    streetPrefix: string,
+  ): Promise<OpenPlzStreet[]> {
+    const params = new URLSearchParams({
+      name: `^${escapeRegex(streetPrefix)}`,
+      postalCode,
+      locality: `^${escapeRegex(locality)}$`,
+    });
+
+    return fetchJson<OpenPlzStreet[]>(`${this.baseUrl}/de/Streets?${params.toString()}`);
+  }
+
   async validate(address: AddressInput): Promise<AddressValidationResult> {
     const localResult = await this.localValidator.validate(address);
     if (!localResult.valid) {
@@ -110,24 +148,25 @@ export class OpenPlzAddressValidator implements AddressValidator {
         valid: false,
         messages: ['Bitte Straße und Hausnummer angeben'],
         normalized,
+        invalidFields: ['street'],
       };
     }
 
     try {
-      const localityParams = new URLSearchParams({
-        postalCode,
-        name: city,
-      });
-      const localities = await fetchJson<OpenPlzLocality[]>(
-        `${this.baseUrl}/de/Localities?${localityParams.toString()}`,
-      );
-
+      const localities = await this.fetchLocalities(postalCode);
       const matchingLocality = localities.find((entry) => localityMatches(city, entry.name));
+
       if (!matchingLocality) {
+        const suggestedLocality = localities[0];
+
         return {
           valid: false,
           messages: ['PLZ und Ort stimmen nicht überein'],
           normalized,
+          invalidFields: ['postalCode', 'city'],
+          suggestion: suggestedLocality
+            ? buildSuggestion(normalized, parsedStreet.name, parsedStreet.houseNumber, suggestedLocality)
+            : undefined,
         };
       }
 
@@ -137,24 +176,30 @@ export class OpenPlzAddressValidator implements AddressValidator {
           valid: false,
           messages: ['Straße und Hausnummer sind erforderlich'],
           normalized,
+          invalidFields: ['street'],
         };
       }
 
-      const streetParams = new URLSearchParams({
-        name: `^${escapeRegex(streetPrefix)}`,
-        postalCode,
-        locality: matchingLocality.name,
-      });
-      const streets = await fetchJson<OpenPlzStreet[]>(
-        `${this.baseUrl}/de/Streets?${streetParams.toString()}`,
-      );
-
+      const streets = await this.fetchStreets(postalCode, matchingLocality.name, streetPrefix);
       const matchingStreet = streets.find((entry) => streetNamesMatch(parsedStreet.name, entry.name));
+
       if (!matchingStreet) {
+        const suggestedStreet = streets[0];
+
         return {
           valid: false,
           messages: ['Straße wurde in dieser PLZ nicht gefunden'],
           normalized,
+          invalidFields: ['street'],
+          suggestion: suggestedStreet
+            ? buildSuggestion(
+                normalized,
+                parsedStreet.name,
+                parsedStreet.houseNumber,
+                matchingLocality,
+                suggestedStreet,
+              )
+            : undefined,
         };
       }
 

@@ -1,8 +1,9 @@
-import type { AddressInput, AddressValidationResult, AddressValidator } from './types';
+import type { AddressField, AddressInput, AddressValidationResult, AddressValidator } from './types';
 
 export class LocalAddressValidator implements AddressValidator {
   async validate(address: AddressInput): Promise<AddressValidationResult> {
     const messages: string[] = [];
+    const invalidFields: AddressField[] = [];
     const street = address.street.trim();
     const postalCode = address.postalCode.trim();
     const city = address.city.trim();
@@ -10,14 +11,17 @@ export class LocalAddressValidator implements AddressValidator {
 
     if (street.length < 3) {
       messages.push('Straße und Hausnummer sind erforderlich');
+      invalidFields.push('street');
     }
 
     if (country === 'DE' && !/^\d{5}$/.test(postalCode)) {
       messages.push('PLZ muss 5-stellig sein');
+      invalidFields.push('postalCode');
     }
 
     if (city.length < 2) {
       messages.push('Ort ist erforderlich');
+      invalidFields.push('city');
     }
 
     return {
@@ -29,6 +33,7 @@ export class LocalAddressValidator implements AddressValidator {
         country,
       },
       messages,
+      invalidFields: invalidFields.length > 0 ? invalidFields : undefined,
     };
   }
 }
